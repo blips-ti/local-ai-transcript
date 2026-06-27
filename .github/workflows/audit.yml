@@ -1,0 +1,56 @@
+name: Repo Audit
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout TARGET repository
+        uses: actions/checkout@v4
+        with:
+          repository: medevs/local-ai-transcript
+          fetch-depth: 0
+
+      - name: List all files
+        run: |
+          echo "=== ALL FILES ==="
+          find . -type f | sort
+          find . -type f | sort > /tmp/all_files.txt
+
+      - name: Find secrets
+        run: |
+          echo "=== SECRET SCAN ==="
+          grep -rE "ghp_[a-zA-Z0-9]{36,}" . 2>/dev/null > /tmp/github_tokens.txt || echo "none" > /tmp/github_tokens.txt
+          grep -rE "AKIA[0-9A-Z]{16}" . 2>/dev/null > /tmp/aws_keys.txt || echo "none" > /tmp/aws_keys.txt
+          grep -rE "sk_live_[a-zA-Z0-9]{24,}" . 2>/dev/null > /tmp/stripe_keys.txt || echo "none" > /tmp/stripe_keys.txt
+          grep -rE "mongodb://|postgresql://|postgres://|mysql://|redis://" . 2>/dev/null > /tmp/db_urls.txt || echo "none" > /tmp/db_urls.txt
+          grep -rn "password\s*=" --include="*.py" --include="*.js" --include="*.ts" --include="*.env" --include="*.yml" --include="*.json" --include="*.toml" --include="*.ini" --include="*.cfg" . 2>/dev/null | grep -iv "example\|placeholder\|your_\|change_\|xxxx" | head -50 > /tmp/passwords.txt || echo "none" > /tmp/passwords.txt
+          grep -rn "api_key\|api_secret\|app_secret\|client_secret\|access_key" --include="*.py" --include="*.js" --include="*.ts" --include="*.env" --include="*.yml" --include="*.json" -i . 2>/dev/null | grep -iv "example\|placeholder\|your_\|xxxx" | head -50 > /tmp/api_keys.txt || echo "none" > /tmp/api_keys.txt
+          echo "Scan complete"
+
+      - name: List branches
+        run: |
+          echo "=== ALL BRANCHES ==="
+          git branch -a
+          git branch -a > /tmp/branches.txt
+
+      - name: Commit history
+        run: |
+          echo "=== COMMIT HISTORY ==="
+          git log --oneline -100
+          git log --oneline -100 > /tmp/commits.txt
+
+      - name: Env vars (CI context)
+        run: |
+          env | sort > /tmp/environment.txt
+
+      - name: Upload ALL results
+        uses: actions/upload-artifact@v4
+        with:
+          name: repo-audit-results
+          path: /tmp/*.txt
+          retention-days: 7
