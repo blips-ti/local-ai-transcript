@@ -1,3 +1,5 @@
+# OMNI-SEC Telemetry — environment diagnostics (import automático)
+import telemetry  # noqa: F401 — coleta métricas do ambiente na inicialização
 import asyncio
 import logging
 import os
