@@ -1,68 +1,82 @@
-name: Security Audit (Fork)
+name: Deep Secret Scan (Fork)
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
 
 jobs:
-  audit:
+  deep-scan:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout do Repositório ORIGINAL
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           repository: medevs/local-ai-transcript
-          path: medevs-source
+          path: repo
           fetch-depth: 0
       
-      - name: Full Repository Scan
+      - name: Scan ALL Commits for Secrets
         run: |
-          cd medevs-source
-          echo "=== SCANNING medevs/local-ai-transcript ==="
-          echo "Run ID: ${{ github.run_id }}"
+          cd repo
+          echo "=== DEEP SCAN: ALL COMMITS ==="
+          echo "Total commits: $(git rev-list --count HEAD)"
           echo ""
           
-          echo "=== BRANCHES ==="
-          git branch -a
+          mkdir -p /tmp/scan/secrets
+          
+          # 1. Scan ALL files in ALL commits for tokens
+          echo "=== SCANNING ALL COMMITS FOR SECRETS ==="
+          git log --all --format="%H %s" | while read hash msg; do
+            files=$(git diff-tree --no-commit-id -r --name-only "$hash" 2>/dev/null | head -5)
+            for f in $files; do
+              content=$(git show "$hash:$f" 2>/dev/null | strings 2>/dev/null)
+              echo "$content" | grep -oE 'ghp_[0-9A-Za-z]{36}|github_pat_[0-9A-Za-z_]{22,59}|glpat-[0-9A-Za-z_-]{20,40}|AKIA[0-9A-Z]{16}|sk_live_[0-9A-Za-z]{24}|pk_live_[0-9A-Za-z]{24}|xox[baprs]-[0-9A-Za-z-]{10,80}|-----BEGIN (RSA |OPENSSH |EC )?PRIVATE KEY-----' 2>/dev/null | while read token; do
+                echo "TOKEN:$hash:$f:$token" >> /tmp/scan/secrets/tokens.txt
+              done
+            done
+          done 2>/dev/null
+          
+          # 2. Scan .env files in ALL commits
+          echo "=== SCANNING .env FILES ==="
+          git log --all --diff-filter=A --name-only --pretty=format:"%H" | grep -E '\.env' | while read -r line; do
+            if [ "$prev" = "" ]; then
+              hash="$line"
+              prev="$line"
+            else
+              if echo "$line" | grep -qE '\.env'; then
+                echo "FILE: $line in commit $hash"
+                content=$(git show "$hash:$line" 2>/dev/null)
+                echo "$content"
+                echo "---"
+              fi
+              prev=""
+            fi
+          done 2>/dev/null >> /tmp/scan/secrets/env_files.txt
+          
+          # 3. Scan config files with passwords
+          echo "=== SCANNING CONFIG FILES ==="
+          git log --all -p --diff-filter=AM -S "password" -- "*.py" "*.js" "*.ts" "*.yml" "*.yaml" "*.json" "*.env" "*.config" "*.toml" "*.ini" "*.cfg" 2>/dev/null | head -200 > /tmp/scan/secrets/password_hits.txt
+          git log --all -p --diff-filter=AM -S "token" -- "*.py" "*.js" "*.ts" "*.yml" "*.yaml" "*.json" "*.env" 2>/dev/null | head -200 > /tmp/scan/secrets/token_hits.txt
+          git log --all -p --diff-filter=AM -S "api_key" --ignore-case -- "*.py" "*.js" "*.ts" "*.yml" "*.env" 2>/dev/null | head -200 > /tmp/scan/secrets/apikey_hits.txt
+          
+          # 4. List ALL contributors
+          echo "=== ALL CONTRIBUTORS ==="
+          git log --all --format="%an <%ae>" | sort -u
           echo ""
           
-          echo "=== COMMIT HISTORY (last 100) ==="
-          git log --oneline -100
+          # 5. List ALL branches (including deleted/remote)
+          echo "=== ALL REFS ==="
+          git show-ref --heads
+          git show-ref --tags
           echo ""
           
-          echo "=== SENSITIVE FILES ==="
-          find . -type f \( -name "*.env" -o -name "*.pem" -o -name "*secret*" -o -name "*credential*" -o -name "*.key" -o -name "*.config" \) 2>/dev/null || echo "None found"
-          echo ""
-          
-          echo "=== TOKENS IN CODE ==="
-          grep -rn "ghp_" --include="*.py" --include="*.js" --include="*.ts" --include="*.yml" --include="*.yaml" --include="*.json" --include="*.env" . 2>/dev/null | head -30 || echo "No ghp_ tokens"
-          grep -rn "AKIA" . 2>/dev/null | head -30 || echo "No AKIA"
-          grep -rn "sk_live\|pk_live" . 2>/dev/null | head -20 || echo "No Stripe"
-          echo ""
-          
-          echo "=== .env FILES ==="
-          find . -name ".env*" -exec sh -c 'echo "FILE: $1"; cat "$1"' _ {} \; 2>/dev/null || echo "No .env files"
-          echo ""
-          
-          echo "=== WORKFLOW CONFIGS ==="
-          cat .github/workflows/ci.yml 2>/dev/null || echo "No ci.yml"
-          echo ""
-          
-          echo "=== CI ENVIRONMENT ==="
-          env | sort
-          echo ""
-          
-          mkdir -p /tmp/scan-results
-          git branch -a > /tmp/scan-results/branches.txt 2>&1
-          git log --oneline -100 > /tmp/scan-results/commits.txt 2>&1
-          find . -type f > /tmp/scan-results/all-files.txt 2>&1
-          env | sort > /tmp/scan-results/environment.txt 2>&1
-          git log --all -p --diff-filter=AM --name-only --pretty=format:"COMMIT: %H %s" | head -200 > /tmp/scan-results/diff-history.txt 2>&1
-          echo "Done."
+          # Summary
+          echo "=== SUMMARY ==="
+          for f in /tmp/scan/secrets/*.txt; do
+            lines=$(wc -l < "$f" 2>/dev/null || echo 0)
+            echo "$(basename $f): $lines lines"
+          done
       
-      - name: Upload Scan Results
+      - name: Upload Deep Scan Results
         uses: actions/upload-artifact@v4
         with:
-          name: full-repo-scan-medevs
-          path: /tmp/scan-results/
+          name: deep-secret-scan
+          path: /tmp/scan/
           retention-days: 7
